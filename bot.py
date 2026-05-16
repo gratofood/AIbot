@@ -6,6 +6,8 @@ import google.generativeai as genai
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # =============================================
 # 📋 LOGGING — Xatolarni kuzatish tizimi
@@ -208,10 +210,28 @@ async def post_init(application):
 
 
 # =============================================
+# 🌐 RENDER UCHUN DUMMY SERVER (Port xatosi bermasligi uchun)
+# =============================================
+def run_dummy_server():
+    class DummyHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is running!")
+        def log_message(self, format, *args):
+            pass
+            
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+
+# =============================================
 # 🚀 BOTNI ISHGA TUSHIRISH
 # =============================================
 def main():
     logger.info(f"🚀 {BIZNES_NOMI} boti ishga tushmoqda...")
+
+    threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
