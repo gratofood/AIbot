@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
-import google.generativeai as genai
+from groq import AsyncGroq
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncio
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Tekshiruv — kalit kiritilmagan bo'lsa xato bersin
 if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
@@ -34,11 +34,11 @@ if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
         "   Tokenni @BotFather dan olishingiz mumkin."
     )
 
-if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+if not GROQ_API_KEY or GROQ_API_KEY == "YOUR_GROQ_API_KEY":
     raise ValueError(
-        "❌ GEMINI_API_KEY topilmadi!\n"
+        "❌ GROQ_API_KEY topilmadi!\n"
         "   .env faylga haqiqiy API kalitingizni yozing.\n"
-        "   Kalitni https://aistudio.google.com/apikey dan olishingiz mumkin."
+        "   Kalitni console.groq.com dan olishingiz mumkin."
     )
 
 # =============================================
@@ -77,18 +77,10 @@ RATE_LIMIT_SECONDS = 3  # Har xabar orasida minimal vaqt
 user_last_message = {}
 
 # =============================================
-# 🤖 GEMINI SOZLASH
+# 🤖 GROQ (LLAMA-3) SOZLASH
 # =============================================
-genai.configure(api_key=GEMINI_API_KEY)
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
-model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
-    system_instruction=BIZNES_MALUMOT,
-    generation_config=genai.GenerationConfig(
-        max_output_tokens=500,
-        temperature=0.7,
-    )
-)
 
 # Har bir foydalanuvchi uchun chat sessiyalarini saqlash
 user_chats = {}
@@ -105,7 +97,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Misol: 'Manikur narxi qancha?'"
     )
     # Yangi chat sessiyasini boshlash (suhbat tarixini tozalash)
-    user_chats[user_id] = model.start_chat(history=[])
+    user_chats[user_id] = [{"role": "system", "content": BIZNES_MALUMOT}]
     await update.message.reply_text(xabar)
 
 
@@ -126,9 +118,14 @@ async def javob_ber(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Chat sessiyasini olish yoki yaratish ---
     if user_id not in user_chats:
-        user_chats[user_id] = model.start_chat(history=[])
+        user_chats[user_id] = [{"role": "system", "content": BIZNES_MALUMOT}]
 
-    chat = user_chats[user_id]
+    chat_history = user_chats[user_id]
+    chat_history.append({"role": "user", "content": savol})
+
+    # Tarixni oxirgi 10 ta savol-javob bilan cheklash (Xotira to'lib ketmasligi uchun)
+    if len(chat_history) > 21:
+        chat_history = [chat_history[0]] + chat_history[-20:]
 
     # "Yozmoqda..." ko'rsatish
     await context.bot.send_chat_action(
@@ -137,51 +134,52 @@ async def javob_ber(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # Gemini API ga so'rov — retry bilan (high traffic / overload uchun)
         max_retries = 3
         delay = 5
-        response = None
+        javob = ""
         
         for attempt in range(max_retries):
             try:
-                response = chat.send_message(savol)
+                response = await groq_client.chat.completions.create(
+                    messages=chat_history,
+                    model="llama3-70b-8192",
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                javob = response.choices[0].message.content
+                chat_history.append({"role": "assistant", "content": javob})
                 break
             except Exception as e:
                 error_msg = str(e).lower()
-                # 429 yoki 503 xatolarida kutamiz va qayta urinamiz
-                if attempt < max_retries - 1 and ("quota" in error_msg or "rate" in error_msg or "resource" in error_msg or "503" in error_msg or "traffic" in error_msg or "overloaded" in error_msg):
-                    if "limit: 0" in error_msg:
-                        raise e  # Hudud (region) cheklovi bo'lsa kutishdan foyda yo'q
+                # 429 yoki rate limit xatolarida kutamiz
+                if attempt < max_retries - 1 and ("quota" in error_msg or "rate" in error_msg or "resource" in error_msg or "503" in error_msg or "traffic" in error_msg):
                     logger.warning(f"⚠️ API band, {delay} soniya kutilmoqda (Urinish: {attempt+1}/{max_retries})")
                     await asyncio.sleep(delay)
                 else:
                     raise e
 
-        javob = response.text
         logger.info(f"Foydalanuvchi [{user_id}]: {savol[:50]}...")
 
     except Exception as e:
         error_msg = str(e).lower()
 
         if "api_key" in error_msg or "authentication" in error_msg or "permission" in error_msg:
-            logger.error("❌ Gemini API kalit noto'g'ri!")
+            logger.error("❌ Groq API kalit noto'g'ri!")
             javob = "Uzr, tizim sozlamalarida xato bor. Iltimos keyinroq qaytadan urinib ko'ring."
 
-        elif "quota" in error_msg or "rate" in error_msg or "resource" in error_msg:
-            if "limit: 0" in error_msg:
-                logger.error("❌ Gemini API hudud (region) chekloviga tushdi (Limit: 0)")
-                javob = "Google Gemini API bepul rejimi O'zbekistonda ishlamaydi (Limit 0). Ishlashi uchun VPN ulangan chet el serveri kerak yoki pullik rejaga o'tish lozim."
-            else:
-                logger.warning("⚠️ Gemini API limit ga yetdi")
-                javob = "Hozir juda ko'p so'rov bor. Iltimos 1 daqiqadan so'ng qaytadan yozing."
+        elif "quota" in error_msg or "rate" in error_msg:
+            logger.warning("⚠️ Groq API limit ga yetdi")
+            javob = "Hozir juda ko'p so'rov bor. Iltimos 1 daqiqadan so'ng qaytadan yozing."
 
         elif "connection" in error_msg or "timeout" in error_msg:
-            logger.error("❌ Gemini API ga ulanib bo'lmadi (internet muammosi)")
+            logger.error("❌ Groq API ga ulanib bo'lmadi (internet muammosi)")
             javob = f"Uzr, hozir internet bilan muammo bor. Iltimos {BIZNES_TELEFON} ga qo'ng'iroq qiling."
 
         else:
             logger.error(f"Kutilmagan xato: {e}", exc_info=True)
             javob = f"Uzr, hozir texnik nosozlik bor. Iltimos {BIZNES_TELEFON} ga qo'ng'iroq qiling."
+            # Agar xato bo'lsa, oxirgi savolni tarixdan olib tashlaymiz
+            chat_history.pop()
 
     await update.message.reply_text(javob)
 
