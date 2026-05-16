@@ -1,0 +1,232 @@
+import os
+import time
+import logging
+from dotenv import load_dotenv
+import google.generativeai as genai
+from telegram import Update, BotCommand
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio
+
+# =============================================
+# 📋 LOGGING — Xatolarni kuzatish tizimi
+# =============================================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# =============================================
+# ⚙️ SOZLAMALAR — .env fayldan o'qiladi
+# =============================================
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Tekshiruv — kalit kiritilmagan bo'lsa xato bersin
+if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+    raise ValueError(
+        "❌ TELEGRAM_TOKEN topilmadi!\n"
+        "   .env faylga haqiqiy tokeningizni yozing.\n"
+        "   Tokenni @BotFather dan olishingiz mumkin."
+    )
+
+if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+    raise ValueError(
+        "❌ GEMINI_API_KEY topilmadi!\n"
+        "   .env faylga haqiqiy API kalitingizni yozing.\n"
+        "   Kalitni https://aistudio.google.com/apikey dan olishingiz mumkin."
+    )
+
+# =============================================
+# 🏪 BIZNES MA'LUMOTLARI — O'ZGARTIRING
+# =============================================
+BIZNES_NOMI = "Sarvinoy Go'zallik Saloni"
+BIZNES_TELEFON = "+998 90 123 45 67"
+
+BIZNES_MALUMOT = f"""Sen {BIZNES_NOMI} ning do'stona AI assistantisan.
+
+Biznes haqida:
+- Nomi: {BIZNES_NOMI}
+- Manzil: Toshkent, Chilonzor tumani, 5-mavze
+- Ish vaqti: Dushanba-Shanba, 09:00 - 20:00
+- Telefon: {BIZNES_TELEFON}
+
+Xizmatlar va narxlar:
+- Soch kesish: 50,000 so'm
+- Soch bo'yash: 150,000 so'mdan
+- Manikur: 80,000 so'm
+- Pedikur: 100,000 so'm
+- Peshqadam (kelin): 500,000 so'm
+
+Qoidalar:
+1. Faqat shu biznes haqida gapir
+2. O'zbek tilida javob ber
+3. Qisqa va aniq javob ber (3-4 jumla)
+4. Uchrashuv belgilash uchun telefonni ulash
+5. Bilmasang: "Aniqroq ma'lumot uchun {BIZNES_TELEFON} ga qo'ng'iroq qiling" de
+"""
+
+# =============================================
+# 🛡️ SPAM HIMOYASI — Rate Limiting
+# =============================================
+RATE_LIMIT_SECONDS = 3  # Har xabar orasida minimal vaqt
+user_last_message = {}
+
+# =============================================
+# 🤖 GEMINI SOZLASH
+# =============================================
+genai.configure(api_key=GEMINI_API_KEY)
+
+model = genai.GenerativeModel(
+    model_name="gemini-2.0-flash",
+    system_instruction=BIZNES_MALUMOT,
+    generation_config=genai.GenerationConfig(
+        max_output_tokens=500,
+        temperature=0.7,
+    )
+)
+
+# Har bir foydalanuvchi uchun chat sessiyalarini saqlash
+user_chats = {}
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi /start yozganda"""
+    nom = update.effective_user.first_name
+    user_id = update.effective_user.id
+    xabar = (
+        f"Assalomu alaykum, {nom}! 👋\n\n"
+        f"Men {BIZNES_NOMI} ning AI assistantiman.\n"
+        f"Xizmatlar, narxlar yoki uchrashuv haqida savol bering!\n\n"
+        f"Misol: 'Manikur narxi qancha?'"
+    )
+    # Yangi chat sessiyasini boshlash (suhbat tarixini tozalash)
+    user_chats[user_id] = model.start_chat(history=[])
+    await update.message.reply_text(xabar)
+
+
+async def javob_ber(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi xabar yozganda AI javob beradi"""
+    user_id = update.effective_user.id
+    savol = update.message.text
+
+    # --- Spam tekshiruvi ---
+    now = time.time()
+    if user_id in user_last_message:
+        elapsed = now - user_last_message[user_id]
+        if elapsed < RATE_LIMIT_SECONDS:
+            user_last_message[user_id] = now  # Spam davom etsa, vaqtni yana yangilaymiz
+            await update.message.reply_text("⏳ Iltimos, xabarlar orasida biroz kuting...")
+            return
+    user_last_message[user_id] = now
+
+    # --- Chat sessiyasini olish yoki yaratish ---
+    if user_id not in user_chats:
+        user_chats[user_id] = model.start_chat(history=[])
+
+    chat = user_chats[user_id]
+
+    # "Yozmoqda..." ko'rsatish
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action="typing"
+    )
+
+    try:
+        # Gemini API ga so'rov — retry bilan (high traffic / overload uchun)
+        max_retries = 3
+        delay = 5
+        response = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = chat.send_message(savol)
+                break
+            except Exception as e:
+                error_msg = str(e).lower()
+                # 429 yoki 503 xatolarida kutamiz va qayta urinamiz
+                if attempt < max_retries - 1 and ("quota" in error_msg or "rate" in error_msg or "resource" in error_msg or "503" in error_msg or "traffic" in error_msg or "overloaded" in error_msg):
+                    if "limit: 0" in error_msg:
+                        raise e  # Hudud (region) cheklovi bo'lsa kutishdan foyda yo'q
+                    logger.warning(f"⚠️ API band, {delay} soniya kutilmoqda (Urinish: {attempt+1}/{max_retries})")
+                    await asyncio.sleep(delay)
+                else:
+                    raise e
+
+        javob = response.text
+        logger.info(f"Foydalanuvchi [{user_id}]: {savol[:50]}...")
+
+    except Exception as e:
+        error_msg = str(e).lower()
+
+        if "api_key" in error_msg or "authentication" in error_msg or "permission" in error_msg:
+            logger.error("❌ Gemini API kalit noto'g'ri!")
+            javob = "Uzr, tizim sozlamalarida xato bor. Iltimos keyinroq qaytadan urinib ko'ring."
+
+        elif "quota" in error_msg or "rate" in error_msg or "resource" in error_msg:
+            if "limit: 0" in error_msg:
+                logger.error("❌ Gemini API hudud (region) chekloviga tushdi (Limit: 0)")
+                javob = "Google Gemini API bepul rejimi O'zbekistonda ishlamaydi (Limit 0). Ishlashi uchun VPN ulangan chet el serveri kerak yoki pullik rejaga o'tish lozim."
+            else:
+                logger.warning("⚠️ Gemini API limit ga yetdi")
+                javob = "Hozir juda ko'p so'rov bor. Iltimos 1 daqiqadan so'ng qaytadan yozing."
+
+        elif "connection" in error_msg or "timeout" in error_msg:
+            logger.error("❌ Gemini API ga ulanib bo'lmadi (internet muammosi)")
+            javob = f"Uzr, hozir internet bilan muammo bor. Iltimos {BIZNES_TELEFON} ga qo'ng'iroq qiling."
+
+        else:
+            logger.error(f"Kutilmagan xato: {e}", exc_info=True)
+            javob = f"Uzr, hozir texnik nosozlik bor. Iltimos {BIZNES_TELEFON} ga qo'ng'iroq qiling."
+
+    await update.message.reply_text(javob)
+
+
+async def yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/help buyrug'i"""
+    xabar = (
+        "📋 Nima so'rashingiz mumkin:\n\n"
+        "• Xizmatlar ro'yxati\n"
+        "• Narxlar\n"
+        "• Ish vaqti\n"
+        "• Manzil\n"
+        "• Uchrashuv belgilash\n\n"
+        "Shunchaki yozing, javob beraman! 😊"
+    )
+    await update.message.reply_text(xabar)
+
+
+async def post_init(application):
+    """Bot ishga tushganda buyruqlarni ro'yxatdan o'tkazish"""
+    await application.bot.set_my_commands([
+        BotCommand("start", "Botni boshlash"),
+        BotCommand("help", "Yordam"),
+    ])
+    logger.info("✅ Bot buyruqlari ro'yxatdan o'tkazildi")
+
+
+# =============================================
+# 🚀 BOTNI ISHGA TUSHIRISH
+# =============================================
+def main():
+    logger.info(f"🚀 {BIZNES_NOMI} boti ishga tushmoqda...")
+
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+
+    # Buyruqlar
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", yordam))
+
+    # Barcha matnli xabarlar
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, javob_ber))
+
+    logger.info(f"✅ {BIZNES_NOMI} boti muvaffaqiyatli ishga tushdi!")
+
+    # Boshlash
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
