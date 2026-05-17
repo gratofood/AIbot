@@ -7,7 +7,7 @@ from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncio
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from flask import Flask
 
 # =============================================
 # 📋 LOGGING — Xatolarni kuzatish tizimi
@@ -208,20 +208,21 @@ async def post_init(application):
 
 
 # =============================================
-# 🌐 RENDER UCHUN DUMMY SERVER (Port xatosi bermasligi uchun)
+# 🌐 RENDER UCHUN DUMMY SERVER (Flask orqali kuchli himoya)
 # =============================================
 def run_dummy_server():
-    class DummyHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot is running!")
-        def log_message(self, format, *args):
-            pass
-            
+    # Render loglarini to'ldirib tashlamaslik uchun Flask loglarini o'chiramiz
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def index():
+        return "Bot 24/7 ishlash rejimida yoniq!"
+        
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    server.serve_forever()
+    app.run(host='0.0.0.0', port=port)
 
 # =============================================
 # 🚀 BOTNI ISHGA TUSHIRISH
