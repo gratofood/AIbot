@@ -208,43 +208,46 @@ async def post_init(application):
 
 
 # =============================================
-# 🌐 RENDER UCHUN DUMMY SERVER (Flask orqali kuchli himoya)
-# =============================================
-def run_dummy_server():
-    # Render loglarini to'ldirib tashlamaslik uchun Flask loglarini o'chiramiz
-    log = logging.getLogger('werkzeug')
-    log.setLevel(logging.ERROR)
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def index():
-        return "Bot 24/7 ishlash rejimida yoniq!"
-        
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-# =============================================
-# 🚀 BOTNI ISHGA TUSHIRISH
+# 🚀 BOTNI ISHGA TUSHIRISH (Render uchun moslashtirilgan)
 # =============================================
 def main():
     logger.info(f"🚀 {BIZNES_NOMI} boti ishga tushmoqda...")
 
-    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # 1. Telegram botni orqa fonda (yashirin) ishga tushiramiz
+    def run_bot_in_background():
+        app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
-    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+        # Buyruqlar
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", yordam))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, javob_ber))
 
-    # Buyruqlar
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", yordam))
+        logger.info(f"✅ {BIZNES_NOMI} boti muvaffaqiyatli ishga tushdi!")
+        
+        # Asyncio tsiklini yaratamiz
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # stop_signals=() juda muhim! Busiz orqa fonda ishlamaydi
+        app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=())
 
-    # Barcha matnli xabarlar
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, javob_ber))
+    bot_thread = threading.Thread(target=run_bot_in_background, daemon=True)
+    bot_thread.start()
 
-    logger.info(f"✅ {BIZNES_NOMI} boti muvaffaqiyatli ishga tushdi!")
+    # 2. Flask veb-serverini asosiy (asosiy) jarayon sifatida ishga tushiramiz
+    # Shunda Render "Ha bu aniq veb-sayt ekan" deb darhol qabul qiladi!
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    
+    web_app = Flask(__name__)
+    
+    @web_app.route('/')
+    def index():
+        return "Bot 24/7 ishlash rejimida yoniq!"
+        
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host='0.0.0.0', port=port)
 
-    # Boshlash
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
