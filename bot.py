@@ -44,30 +44,31 @@ if not GROQ_API_KEY or GROQ_API_KEY == "YOUR_GROQ_API_KEY":
 # =============================================
 # 🏪 BIZNES MA'LUMOTLARI — O'ZGARTIRING
 # =============================================
-BIZNES_NOMI = "Sarvinoy Go'zallik Saloni"
-BIZNES_TELEFON = "+998 90 123 45 67"
+BIZNES_NOMI = "Grato"
+BIZNES_TELEFON = "+998 99 736 36 36"
 
-BIZNES_MALUMOT = f"""Sen {BIZNES_NOMI} ning do'stona AI assistantisan.
+BIZNES_MALUMOT = f"""Sen {BIZNES_NOMI} shirinliklar do'konining do'stona AI assistantisan.
 
 Biznes haqida:
 - Nomi: {BIZNES_NOMI}
-- Manzil: Toshkent, Chilonzor tumani, 5-mavze
-- Ish vaqti: Dushanba-Shanba, 09:00 - 20:00
+- Filiallar: 5-mkr, Kalxoz bozori, Gala Osiyo, Sharq, Guliver
+- Ish vaqti: Har kuni, 08:00 - 23:00
 - Telefon: {BIZNES_TELEFON}
+- Yetkazib berish: Bor (pullik)
 
-Xizmatlar va narxlar:
-- Soch kesish: 50,000 so'm
-- Soch bo'yash: 150,000 so'mdan
-- Manikur: 80,000 so'm
-- Pedikur: 100,000 so'm
-- Peshqadam (kelin): 500,000 so'm
+Mahsulotlar:
+- Tortlar (buyurtmaga va tayyor)
+- Pirojnoelar (turli xil)
+- Yarimtayyor mahsulotlar
 
 Qoidalar:
 1. Faqat shu biznes haqida gapir
 2. O'zbek tilida javob ber
 3. Qisqa va aniq javob ber (3-4 jumla)
-4. Uchrashuv belgilash uchun telefonni ulash
+4. Buyurtma berish yoki savollar uchun telefonni ulash
 5. Bilmasang: "Aniqroq ma'lumot uchun {BIZNES_TELEFON} ga qo'ng'iroq qiling" de
+6. Mijozlarga iliq va samimiy munosabatda bo'l
+7. Agar narx so'rasa, aniq narxni bilmasang "Narxlar turga qarab farq qiladi, {BIZNES_TELEFON} ga qo'ng'iroq qilib aniqlashtiring" de
 """
 
 # =============================================
@@ -91,10 +92,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nom = update.effective_user.first_name
     user_id = update.effective_user.id
     xabar = (
-        f"Assalomu alaykum, {nom}! 👋\n\n"
-        f"Men {BIZNES_NOMI} ning AI assistantiman.\n"
-        f"Xizmatlar, narxlar yoki uchrashuv haqida savol bering!\n\n"
-        f"Misol: 'Manikur narxi qancha?'"
+        f"Assalomu alaykum, {nom}! 🍰\n\n"
+        f"Men {BIZNES_NOMI} shirinliklar do'konining AI assistantiman.\n"
+        f"Tortlar, pirojnoelar, yetkazib berish yoki filiallarimiz haqida savol bering!\n\n"
+        f"Misol: 'Tort buyurtma qilsam bo'ladimi?'"
     )
     # Yangi chat sessiyasini boshlash (suhbat tarixini tozalash)
     user_chats[user_id] = [{"role": "system", "content": BIZNES_MALUMOT}]
@@ -188,11 +189,12 @@ async def yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/help buyrug'i"""
     xabar = (
         "📋 Nima so'rashingiz mumkin:\n\n"
-        "• Xizmatlar ro'yxati\n"
-        "• Narxlar\n"
-        "• Ish vaqti\n"
-        "• Manzil\n"
-        "• Uchrashuv belgilash\n\n"
+        "🍰 Tortlar va pirojnoelar\n"
+        "📦 Yarimtayyor mahsulotlar\n"
+        "🚗 Yetkazib berish\n"
+        "📍 Filiallar manzili\n"
+        "🕐 Ish vaqti\n"
+        "📞 Buyurtma berish\n\n"
         "Shunchaki yozing, javob beraman! 😊"
     )
     await update.message.reply_text(xabar)
