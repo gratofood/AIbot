@@ -142,7 +142,7 @@ async def javob_ber(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 response = await groq_client.chat.completions.create(
                     messages=chat_history,
-                    model="llama3-70b-8192",
+                    model="llama-3.3-70b-versatile",
                     temperature=0.7,
                     max_tokens=500
                 )
